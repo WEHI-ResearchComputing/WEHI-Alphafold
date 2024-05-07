@@ -22,12 +22,11 @@ import random
 import shutil
 import sys
 import time
-from typing import Any, Dict, Union
+from typing import Any, Dict, Mapping, Union
 
 from absl import app
 from absl import flags
 from absl import logging
-from alphafold.common import confidence
 from alphafold.common import protein
 from alphafold.common import residue_constants
 from alphafold.data import pipeline
@@ -41,6 +40,7 @@ from alphafold.model import model
 from alphafold.relax import relax
 import jax.numpy as jnp
 import numpy as np
+from utils import *
 
 # Internal import (7716).
 
@@ -59,7 +59,10 @@ flags.DEFINE_list(
     'multiple sequences, then it will be folded as a multimer. Paths should be '
     'separated by commas. All FASTA paths must have a unique basename as the '
     'basename is used to name the output directories for each prediction.')
-
+# Modified For WEHI decoupling only
+flags.DEFINE_list('model_indices', None, 'Indices of models to use.'
+                    'A comma separated list of indices between 0,4. Default is 0')
+# --------------------------------------------------------------------------------
 flags.DEFINE_string('data_dir', None, 'Path to directory of supporting data.')
 flags.DEFINE_string('output_dir', None, 'Path to a directory that will '
                     'store the results.')
@@ -112,6 +115,8 @@ flags.DEFINE_boolean('benchmark', False, 'Run multiple JAX model evaluations '
                      'to obtain a timing that excludes the compilation time, '
                      'which should be more indicative of the time required for '
                      'inferencing many proteins.')
+flags.DEFINE_boolean('features_only', False, 'Stop pipeline once feature '
+                     'extraction is complete and features.pkl is created.')
 flags.DEFINE_integer('random_seed', None, 'The random seed for the data '
                      'pipeline. By default, this is randomly generated. Note '
                      'that even if this is set, Alphafold may still not be '
@@ -138,6 +143,10 @@ flags.DEFINE_enum_class('models_to_relax', ModelsToRelax.BEST, ModelsToRelax,
                         'distracting stereochemical violations but might help '
                         'in case you are having issues with the relaxation '
                         'stage.')
+# Modified For WEHI decoupling only
+flags.DEFINE_boolean('relax_only', False,
+                        'If set run relaxation only, checks if unrelaxed pdbs exist.')
+# ------------------------------------------------------------------------------------
 flags.DEFINE_boolean('use_gpu_relax', None, 'Whether to relax on GPU. '
                      'Relax on GPU can be much faster than CPU, so it is '
                      'recommended to enable if possible. GPUs must be available'
@@ -172,63 +181,6 @@ def _jnp_to_np(output: Dict[str, Any]) -> Dict[str, Any]:
   return output
 
 
-def _save_confidence_json_file(
-    plddt: np.ndarray, output_dir: str, model_name: str
-) -> None:
-  confidence_json = confidence.confidence_json(plddt)
-
-  # Save the confidence json.
-  confidence_json_output_path = os.path.join(
-      output_dir, f'confidence_{model_name}.json'
-  )
-  with open(confidence_json_output_path, 'w') as f:
-    f.write(confidence_json)
-
-
-def _save_mmcif_file(
-    prot: protein.Protein,
-    output_dir: str,
-    model_name: str,
-    file_id: str,
-    model_type: str,
-) -> None:
-  """Crate mmCIF string and save to a file.
-
-  Args:
-    prot: Protein object.
-    output_dir: Directory to which files are saved.
-    model_name: Name of a model.
-    file_id: The file ID (usually the PDB ID) to be used in the mmCIF.
-    model_type: Monomer or multimer.
-  """
-
-  mmcif_string = protein.to_mmcif(prot, file_id, model_type)
-
-  # Save the MMCIF.
-  mmcif_output_path = os.path.join(output_dir, f'{model_name}.cif')
-  with open(mmcif_output_path, 'w') as f:
-    f.write(mmcif_string)
-
-
-def _save_pae_json_file(
-    pae: np.ndarray, max_pae: float, output_dir: str, model_name: str
-) -> None:
-  """Check prediction result for PAE data and save to a JSON file if present.
-
-  Args:
-    pae: The n_res x n_res PAE array.
-    max_pae: The maximum possible PAE value.
-    output_dir: Directory to which files are saved.
-    model_name: Name of a model.
-  """
-  pae_json = confidence.pae_json(pae, max_pae)
-
-  # Save the PAE json.
-  pae_json_output_path = os.path.join(output_dir, f'pae_{model_name}.json')
-  with open(pae_json_output_path, 'w') as f:
-    f.write(pae_json)
-
-
 def predict_structure(
     fasta_path: str,
     fasta_name: str,
@@ -239,8 +191,7 @@ def predict_structure(
     benchmark: bool,
     random_seed: int,
     models_to_relax: ModelsToRelax,
-    model_type: str,
-):
+    model_names_extra:list):
   """Predicts structure using AlphaFold for the given sequence."""
   logging.info('Predicting %s', fasta_name)
   timings = {}
@@ -253,15 +204,31 @@ def predict_structure(
 
   # Get features.
   t_0 = time.time()
-  feature_dict = data_pipeline.process(
-      input_fasta_path=fasta_path,
-      msa_output_dir=msa_output_dir)
-  timings['features'] = time.time() - t_0
-
+  
   # Write out features as a pickled dictionary.
   features_output_path = os.path.join(output_dir, 'features.pkl')
+
+  # Modified For WEHI decoupling only
+  if os.path.exists(features_output_path):
+    feature_dict = pickle.load(open(features_output_path, 'rb'))
+    logging.info('features.pkl found at %s. Skipping features pipeline.',
+        features_output_path)
+  else:
+    feature_dict = data_pipeline.process(
+        input_fasta_path=fasta_path,
+        msa_output_dir=msa_output_dir)
+
+  timings['features'] = time.time() - t_0
+
   with open(features_output_path, 'wb') as f:
     pickle.dump(feature_dict, f, protocol=4)
+
+  if FLAGS.features_only:
+    logging.info('Features only requested. Exiting pipeline.')
+    logging.info('Final timings for %s: %s', fasta_name, timings)
+    # End here for features only.
+    return
+  # ------------------------------------------------------------------------------------
 
   unrelaxed_pdbs = {}
   unrelaxed_proteins = {}
@@ -300,16 +267,7 @@ def predict_structure(
           model_name, fasta_name, t_diff)
 
     plddt = prediction_result['plddt']
-    _save_confidence_json_file(plddt, output_dir, model_name)
     ranking_confidences[model_name] = prediction_result['ranking_confidence']
-
-    if (
-        'predicted_aligned_error' in prediction_result
-        and 'max_predicted_aligned_error' in prediction_result
-    ):
-      pae = prediction_result['predicted_aligned_error']
-      max_pae = prediction_result['max_predicted_aligned_error']
-      _save_pae_json_file(pae, float(max_pae), output_dir, model_name)
 
     # Remove jax dependency from results.
     np_prediction_result = _jnp_to_np(dict(prediction_result))
@@ -334,14 +292,6 @@ def predict_structure(
     unrelaxed_pdb_path = os.path.join(output_dir, f'unrelaxed_{model_name}.pdb')
     with open(unrelaxed_pdb_path, 'w') as f:
       f.write(unrelaxed_pdbs[model_name])
-
-    _save_mmcif_file(
-        prot=unrelaxed_protein,
-        output_dir=output_dir,
-        model_name=f'unrelaxed_{model_name}',
-        file_id=str(model_index),
-        model_type=model_type,
-    )
 
   # Rank by model confidence.
   ranked_order = [
@@ -374,15 +324,6 @@ def predict_structure(
     with open(relaxed_output_path, 'w') as f:
       f.write(relaxed_pdb_str)
 
-    relaxed_protein = protein.from_pdb_string(relaxed_pdb_str)
-    _save_mmcif_file(
-        prot=relaxed_protein,
-        output_dir=output_dir,
-        model_name=f'relaxed_{model_name}',
-        file_id='0',
-        model_type=model_type,
-    )
-
   # Write out relaxed PDBs in rank order.
   for idx, model_name in enumerate(ranked_order):
     ranked_output_path = os.path.join(output_dir, f'ranked_{idx}.pdb')
@@ -392,21 +333,8 @@ def predict_structure(
       else:
         f.write(unrelaxed_pdbs[model_name])
 
-    if model_name in relaxed_pdbs:
-      protein_instance = protein.from_pdb_string(relaxed_pdbs[model_name])
-    else:
-      protein_instance = protein.from_pdb_string(unrelaxed_pdbs[model_name])
-
-    _save_mmcif_file(
-        prot=protein_instance,
-        output_dir=output_dir,
-        model_name=f'ranked_{idx}',
-        file_id=str(idx),
-        model_type=model_type,
-    )
-
   ranking_output_path = os.path.join(output_dir, 'ranking_debug.json')
-  with open(ranking_output_path, 'w') as f:
+  with open(ranking_output_path, 'a') as f:
     label = 'iptm+ptm' if 'iptm' in prediction_result else 'plddts'
     f.write(json.dumps(
         {label: ranking_confidences, 'order': ranked_order}, indent=4))
@@ -414,14 +342,108 @@ def predict_structure(
   logging.info('Final timings for %s: %s', fasta_name, timings)
 
   timings_output_path = os.path.join(output_dir, 'timings.json')
-  with open(timings_output_path, 'w') as f:
+  with open(timings_output_path, 'a') as f:
     f.write(json.dumps(timings, indent=4))
   if models_to_relax != ModelsToRelax.NONE:
     relax_metrics_path = os.path.join(output_dir, 'relax_metrics.json')
     with open(relax_metrics_path, 'w') as f:
       f.write(json.dumps(relax_metrics, indent=4))
 
+  # For WEHI decoupling only
+  rerank(output_dir,model_names_extra, fasta_name)
+  # -------------------------------------------------------
 
+# For WEHI decoupling only
+def relaxation(output_dir_base: str,
+               fasta_name: str,
+               models_to_relax: ModelsToRelax,
+               model_runners: Dict[str, model.RunModel],
+               amber_relaxer: relax.AmberRelaxation,
+               model_names_extra:list):
+  logging.info("Start relaxation.")
+  ranking_confidences = {}
+  unrelaxed_pdbs = {}
+  unrelaxed_proteins = {}
+  relax_metrics = {}
+  timings = {}
+  relaxed_pdbs = {}
+  to_relax =[]
+
+  output_dir = os.path.join(output_dir_base, fasta_name)
+
+  for model_index, (model_name, model_runner) in enumerate(
+      model_runners.items()):
+    if os.path.exists(os.path.join(output_dir, f'result_{model_name}.pkl')):
+      logging.info(f"Features found for {model_name}.")
+      prediction_result=pickle.load(open(os.path.join(output_dir, f'result_{model_name}.pkl'), 'rb'))
+      ranking_confidences[model_name] = prediction_result['ranking_confidence']
+    else:
+      logging.info(f"Features not found please run prediction before you run relaxation only: {model_name}.")
+      continue
+  # Rank by model confidence.
+  ranked_order = [
+      model_name for model_name, confidence in
+      sorted(ranking_confidences.items(), key=lambda x: x[1], reverse=True)]
+
+  if len(ranked_order)>0:
+    # Relax predictions.
+    if models_to_relax == ModelsToRelax.BEST:
+      to_relax = [ranked_order[0]]
+    elif models_to_relax == ModelsToRelax.ALL:
+      to_relax = ranked_order
+    elif models_to_relax == ModelsToRelax.NONE:
+      to_relax = []
+    logging.info(f"Models to relax: {to_relax}")
+  else:
+    logging.info(f"No models to relax")
+    return
+
+  for model_name in to_relax:
+    unrelaxed_pdb_path = os.path.join(output_dir, f'unrelaxed_{model_name}.pdb')
+    if os.path.exists(unrelaxed_pdb_path):
+      with open(unrelaxed_pdb_path, 'r') as f:
+        unrelaxed_pdbs[model_name]=f.read()      
+      unrelaxed_proteins[model_name]=protein.from_pdb_string(unrelaxed_pdbs[model_name])
+        
+      t_0 = time.time()
+      relaxed_pdb_str, _, violations = amber_relaxer.process(
+          prot=unrelaxed_proteins[model_name])
+      relax_metrics[model_name] = {
+          'remaining_violations': violations,
+          'remaining_violations_count': sum(violations)
+      }
+      timings[f'relax_{model_name}'] = time.time() - t_0
+      relaxed_pdbs[model_name] = relaxed_pdb_str
+
+      # Save the relaxed PDB.
+      relaxed_output_path = os.path.join(
+          output_dir, f'relaxed_{model_name}.pdb')
+      with open(relaxed_output_path, 'w') as f:
+        f.write(relaxed_pdb_str)
+    else:
+      logging.info(f"Unrelaxed model {to_relax} not found. Relaxation cancelled.")
+
+  # Write out relaxed PDBs in rank order.
+  for idx, model_name in enumerate(ranked_order):
+    ranked_output_path = os.path.join(output_dir, f'ranked_{idx}.pdb')
+    with open(ranked_output_path, 'w') as f:
+      if model_name in relaxed_pdbs:
+        f.write(relaxed_pdbs[model_name])
+
+  if len(to_relax)>0:
+    logging.info('Final relaxation timings for %s: %s', fasta_name, timings)
+    timings_output_path = os.path.join(output_dir, 'timings.json')
+    with open(timings_output_path, 'a') as f:
+      f.write(json.dumps(timings, indent=4))
+    if models_to_relax != ModelsToRelax.NONE:
+      relax_metrics_path = os.path.join(output_dir, 'relax_metrics.json')
+      with open(relax_metrics_path, 'a') as f:
+        f.write(json.dumps(relax_metrics, indent=4))
+
+    rerank(output_dir,model_names_extra, fasta_name)
+    logging.info("Relaxation done.")
+
+# ------------------------------------------------------------------------------------------
 def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
@@ -441,7 +463,6 @@ def main(argv):
               should_be_set=not use_small_bfd)
 
   run_multimer_system = 'multimer' in FLAGS.model_preset
-  model_type = 'Multimer' if run_multimer_system else 'Monomer'
   _check_flag('pdb70_database_path', 'model_preset',
               should_be_set=not run_multimer_system)
   _check_flag('pdb_seqres_database_path', 'model_preset',
@@ -453,12 +474,27 @@ def main(argv):
     num_ensemble = 8
   else:
     num_ensemble = 1
-
+  
+  # Check model indices
+  if(not FLAGS.model_indices):
+      model_indices=[0]
+  else:
+      if all(i.isdigit() for i in FLAGS.model_indices):
+        model_indices=[int(ind) for ind in FLAGS.model_indices  ]
+      else:
+          raise ValueError(f'--model_indiced must positive integers, characters are not allowed.')
+  if len(model_indices)>5 :
+    raise ValueError(f'--model_indiced can contain only 5 elements.')
+  if any(i>=5 for i in model_indices):
+    raise ValueError(f'--model_indiced must be indices between 0 and 4.')
+  if any(i <=-1 for i in model_indices):
+    raise ValueError(f'--model_indiced must be indices between 0 and 4.')
+    
   # Check for duplicate FASTA file names.
   fasta_names = [pathlib.Path(p).stem for p in FLAGS.fasta_paths]
   if len(fasta_names) != len(set(fasta_names)):
     raise ValueError('All FASTA paths must have a unique basename.')
-
+  
   if run_multimer_system:
     template_searcher = hmmsearch.Hmmsearch(
         binary_path=FLAGS.hmmsearch_binary_path,
@@ -508,7 +544,20 @@ def main(argv):
     data_pipeline = monomer_data_pipeline
 
   model_runners = {}
-  model_names = config.MODEL_PRESETS[FLAGS.model_preset]
+  #model_names = config.MODEL_PRESETS[FLAGS.model_preset]
+  
+  # Choose model names according to model_indices
+  models = config.MODEL_PRESETS[FLAGS.model_preset]
+  model_names =[models[index] for index in model_indices]
+
+  # For WEHI decoupling only
+  model_names_extra=[] 
+  for m in models:
+    for i in range(num_predictions_per_model):
+        model_names_extra.append(f'{m}_pred_{i}')
+  logging.info(model_names_extra)
+  # --------------------------------------------------------
+        
   for model_name in model_names:
     model_config = config.model_config(model_name)
     if run_multimer_system:
@@ -538,21 +587,31 @@ def main(argv):
   logging.info('Using random seed %d for the data pipeline', random_seed)
 
   # Predict structure for each of the sequences.
+  # Modified For WEHI decoupling only
   for i, fasta_path in enumerate(FLAGS.fasta_paths):
     fasta_name = fasta_names[i]
-    predict_structure(
-        fasta_path=fasta_path,
+    if FLAGS.relax_only:
+      relaxation(
         fasta_name=fasta_name,
         output_dir_base=FLAGS.output_dir,
-        data_pipeline=data_pipeline,
         model_runners=model_runners,
         amber_relaxer=amber_relaxer,
-        benchmark=FLAGS.benchmark,
-        random_seed=random_seed,
         models_to_relax=FLAGS.models_to_relax,
-        model_type=model_type,
-    )
-
+        model_names_extra=model_names_extra
+      )
+    else: 
+      predict_structure(
+          fasta_path=fasta_path,
+          fasta_name=fasta_name,
+          output_dir_base=FLAGS.output_dir,
+          data_pipeline=data_pipeline,
+          model_runners=model_runners,
+          amber_relaxer=amber_relaxer,
+          benchmark=FLAGS.benchmark,
+          random_seed=random_seed,
+          models_to_relax=FLAGS.models_to_relax,
+          model_names_extra=model_names_extra)
+  # --------------------------------------------------------  
 
 if __name__ == '__main__':
   flags.mark_flags_as_required([

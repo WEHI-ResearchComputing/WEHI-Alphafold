@@ -24,8 +24,6 @@ import mock
 import numpy as np
 # Internal import (7716).
 
-TEST_DATA_DIR = 'alphafold/common/testdata/'
-
 
 class RunAlphafoldTest(parameterized.TestCase):
 
@@ -60,18 +58,7 @@ class RunAlphafoldTest(parameterized.TestCase):
         'max_predicted_aligned_error': np.array(0.),
     }
     model_runner_mock.multimer_mode = False
-
-    with open(
-        os.path.join(
-            absltest.get_default_test_srcdir(), TEST_DATA_DIR, 'glucagon.pdb'
-        )
-    ) as f:
-      pdb_string = f.read()
-    amber_relaxer_mock.process.return_value = (
-        pdb_string,
-        None,
-        [1.0, 0.0, 0.0],
-    )
+    amber_relaxer_mock.process.return_value = ('RELAXED', None, [1., 0., 0.])
 
     out_dir = self.create_tempdir().full_path
     fasta_path = os.path.join(out_dir, 'target.fasta')
@@ -89,8 +76,7 @@ class RunAlphafoldTest(parameterized.TestCase):
         benchmark=False,
         random_seed=0,
         models_to_relax=models_to_relax,
-        model_type='Monomer',
-    )
+        )
 
     base_output_files = os.listdir(out_dir)
     self.assertIn('target.fasta', base_output_files)
@@ -98,22 +84,11 @@ class RunAlphafoldTest(parameterized.TestCase):
 
     target_output_files = os.listdir(os.path.join(out_dir, 'test'))
     expected_files = [
-        'confidence_model1.json',
-        'features.pkl',
-        'msas',
-        'pae_model1.json',
-        'ranked_0.cif',
-        'ranked_0.pdb',
-        'ranking_debug.json',
-        'result_model1.pkl',
-        'timings.json',
-        'unrelaxed_model1.cif',
-        'unrelaxed_model1.pdb',
+        'features.pkl', 'msas', 'ranked_0.pdb', 'ranking_debug.json',
+        'result_model1.pkl', 'timings.json', 'unrelaxed_model1.pdb',
     ]
     if models_to_relax == run_alphafold.ModelsToRelax.ALL:
-      expected_files.extend(
-          ['relaxed_model1.cif', 'relaxed_model1.pdb', 'relax_metrics.json']
-      )
+      expected_files.extend(['relaxed_model1.pdb', 'relax_metrics.json'])
       with open(os.path.join(out_dir, 'test', 'relax_metrics.json')) as f:
         relax_metrics = json.loads(f.read())
       self.assertDictEqual({'model1': {'remaining_violations': [1.0, 0.0, 0.0],

@@ -29,6 +29,7 @@ class Hmmbuild(object):
   def __init__(self,
                *,
                binary_path: str,
+               n_cpu: int = 2,
                singlemx: bool = False):
     """Initializes the Python hmmbuild wrapper.
 
@@ -40,8 +41,18 @@ class Hmmbuild(object):
     Raises:
       RuntimeError: If hmmbuild binary not found within the path.
     """
+
+    n_cpu_override = os.getenv('ALPHAFOLD_FEATURES_CPUS')
+    if n_cpu_override is not None:
+        n_cpu = n_cpu_override
+
+    n_cpu_override = os.getenv('ALPHAFOLD_HMMBUILD_CPUS')
+    if n_cpu_override is not None:
+        n_cpu = n_cpu_override
+
     self.binary_path = binary_path
     self.singlemx = singlemx
+    self.n_cpu = n_cpu
 
   def build_profile_from_sto(self, sto: str, model_construction='fast') -> str:
     """Builds a HHM for the aligned sequences given as an A3M string.
@@ -113,6 +124,7 @@ class Hmmbuild(object):
       if self.singlemx:
         cmd.append('--singlemx')
       cmd.extend([
+          '--cpu', str(self.n_cpu),
           '--amino',
           output_hmm_path,
           input_query,

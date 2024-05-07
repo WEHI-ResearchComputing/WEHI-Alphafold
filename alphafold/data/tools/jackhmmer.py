@@ -75,6 +75,14 @@ class Jackhmmer:
       logging.error('Could not find Jackhmmer database %s', database_path)
       raise ValueError(f'Could not find Jackhmmer database {database_path}')
 
+    n_cpu_override = os.getenv('ALPHAFOLD_FEATURES_CPUS')
+    if n_cpu_override is not None:
+        n_cpu = n_cpu_override
+
+    n_cpu_override = os.getenv('ALPHAFOLD_JACKHMMER_CPUS')
+    if n_cpu_override is not None:
+        n_cpu = n_cpu_override
+
     self.n_cpu = n_cpu
     self.n_iter = n_iter
     self.e_value = e_value

@@ -1,0 +1,87 @@
+Bootstrap: docker
+From: nvidia/cuda:11.1.1-cudnn8-runtime-ubuntu18.04
+# Edit CUDA version here and in %post
+
+%environment
+export PATH="/opt/conda/bin${PATH:+:${PATH}}"
+
+%files
+# Build on ../
+alphafold /app/alphafold
+
+%post -c /bin/bash
+
+  # Setup CUDA version
+  CUDA=11.1.1
+
+  apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    build-essential \
+    cmake \
+    cuda-command-line-tools-$(cut -f1,2 -d- <<< ${CUDA//./-}) \
+    git \
+    hmmer \
+    kalign \
+    locales \
+    tzdata \
+    wget
+  
+  rm -rf /var/lib/apt/lists/*
+
+  locale-gen "en_US.UTF-8"
+
+  git clone --branch v3.3.0 https://github.com/soedinglab/hh-suite.git /opt/hh-suite 
+  mkdir -p /opt/hh-suite/build 
+  cd /opt/hh-suite/build 
+  cmake -DCMAKE_INSTALL_PREFIX=/opt/hhsuite .. 
+  make -j 4 && make install 
+  ln -s /opt/hhsuite/bin/* /usr/bin 
+  cd /
+  rm -rf /opt/hh-suite
+
+  #wget -q -P /opt https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh 
+  #bash /opt/Miniconda3-latest-Linux-x86_64.sh -b -p /opt/conda 
+  wget -q -P /opt https://repo.anaconda.com/miniconda/Miniconda3-py310_24.1.2-0-Linux-x86_64.sh
+  bash /opt/Miniconda3-py310_24.1.2-0-Linux-x86_64.sh -b -p /opt/conda 
+  rm -f /opt/Miniconda3-py310_24.1.2-0-Linux-x86_64.sh
+
+  export PATH="/opt/conda/bin${PATH:+:${PATH}}"
+
+  conda install -qy conda==24.1.2
+  conda install -y -c conda-forge \
+    openmm=7.7.0 \
+	matplotlib=3.8.3 \
+    cudatoolkit==${CUDA_VERSION} \
+    pdbfixer \
+    pip 
+  conda clean --all --force-pkgs-dirs --yes
+
+  ldconfig
+  ldconfig -p
+
+  wget -q -P /app/alphafold/alphafold/common/ \
+    https://git.scicore.unibas.ch/schwede/openstructure/-/raw/7102c63615b64735c4941278d92b554ec94415f8/modules/mol/alg/src/stereo_chemical_props.txt
+
+  pip3 install --upgrade pip --no-cache-dir 
+  pip3 install -r /app/alphafold/requirements.txt --no-cache-dir 
+  pip3 install --upgrade --no-cache-dir jax==0.3.25 jaxlib==0.3.25+cuda11.cudnn805 -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+
+  cd -
+
+  cd /app/alphafold
+  cat << 'EOF' > /app/run_alphafold.sh
+#!/bin/bash
+
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+cd /app/alphafold
+python /app/alphafold/run_alphafold.py "$@"
+EOF
+
+   chmod +xr /app/run_alphafold.sh
+
+%runscript
+
+  cd /app/alphafold
+  exec  /app/run_alphafold.sh "$@"
+
+%labels
+AUTHOR esteva.m@wehi.edu.au

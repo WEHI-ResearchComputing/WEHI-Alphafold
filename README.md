@@ -1,5 +1,24 @@
 ![header](imgs/header.jpg)
 
+# Disclaimer
+
+This repo is a modified copy of [DeepMind AlphaFold](https://github.com/google-deepmind/alphafold). the modifications done is to optimise the runs on WEHI's HPC (Milton) and make best use of the limited resources.
+
+## Modifications:
+* Most changes happened in [run_alphafold.py](https://github.com/WEHI-ResearchComputing/WEHI-Alphafold/blob/main/run_alphafold.py). The following were added to run each step in a separate task and also run each prediction model on a different GPU in parallel instead of all 5 models on one GPU.
+  
+      1- Add flag (model_indices) to specify which prediction model to run. 
+    
+      2- Add flag (relax_only) to run relaxation only on saved prediction results.
+  
+      3- Add flag (features_only) to run the MSA and feature extraction step only.
+
+* Add re-ranking function, to read all available results in the output directory and rank the models. It also contains a plotting function that plots `MSA WITH COVERAGE`, `LDDT PER POSITION` and `Predicted LDDt and Predicted Aligned Errorr per model`
+* Singularity [definition file](https://github.com/WEHI-ResearchComputing/WEHI-Alphafold/blob/main/AlphaFold.def)
+* Add wrappers to run alphafold from singularity image
+
+![wf](imgs/alphafold_wf.jpg)
+
 # AlphaFold
 
 This package provides an implementation of the inference pipeline of AlphaFold
@@ -35,6 +54,16 @@ If you have any questions, please contact the AlphaFold team at
 [alphafold@deepmind.com](mailto:alphafold@deepmind.com).
 
 ![CASP14 predictions](imgs/casp14_predictions.gif)
+
+## Testing on Milton
+```
+module load anaconda3
+conda activate  /stornext/System/data/apps/rc-tools/rc-tools-1.0/bin/tools/ProteinHallucination/envs/alphafold_2.3.0
+
+python3 run_alphafold.py --model_indices=3,1,2 --fasta_paths=/vast/scratch/users/iskander.j/2.3.2/ecoli.fasta --output_dir=/vast/scratch/users/iskander.j/AF2.3.0_test --data_dir=/vast/projects/alphafold/databases --uniref90_database_path=/vast/projects/alphafold/databases/uniref90/uniref90.fasta --mgnify_database_path=/vast/projects/alphafold/databases/mgnify/mgy_clusters.fa --template_mmcif_dir=/vast/projects/alphafold/databases/pdb_mmcif/mmcif_files --max_template_date=2021-01-01 --obsolete_pdbs_path=/vast/projects/alphafold/databases/pdb_mmcif/obsolete.dat --use_gpu_relax=True --bfd_database_path=/vast/projects/alphafold/databases/bfd/bfd_metaclust_clu_complete_id30_c90_final_seq.sorted_opt --uniref30_database_path=/vast/projects/alphafold/databases/uniclust30/uniclust30_2018_08/uniclust30_2018_08 --pdb70_database_path=/vast/projects/alphafold/databases/pdb70/pdb70
+
+```
+You can also add `--model_preset=monomer_ptm`to use the original CASP14 model fine tuned with the pTM head, providing a pairwise confidence measure. It is slightly less accurate than the normal monomer model. **This model will give you the predicted aligned error needed for plots.**
 
 ## Installation and running your first prediction
 

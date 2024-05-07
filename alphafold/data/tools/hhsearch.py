@@ -32,6 +32,7 @@ class HHSearch:
   def __init__(self,
                *,
                binary_path: str,
+               n_cpu: int = 2,
                databases: Sequence[str],
                maxseq: int = 1_000_000):
     """Initializes the Python HHsearch wrapper.
@@ -47,9 +48,19 @@ class HHSearch:
     Raises:
       RuntimeError: If HHsearch binary not found within the path.
     """
+    n_cpu_override = os.getenv('ALPHAFOLD_FEATURES_CPUS')
+    if n_cpu_override is not None:
+        n_cpu = n_cpu_override
+
+    # Override number of CPUS with environment variable
+    n_cpu_override = os.getenv('ALPHAFOLD_HHSEARCH_CPUS')
+    if n_cpu_override is not None:
+        n_cpu = n_cpu_override
+
     self.binary_path = binary_path
     self.databases = databases
     self.maxseq = maxseq
+    self.n_cpu = n_cpu
 
     for database_path in self.databases:
       if not glob.glob(database_path + '_*'):
@@ -79,6 +90,7 @@ class HHSearch:
       cmd = [self.binary_path,
              '-i', input_path,
              '-o', hhr_path,
+             '-cpu', str(self.n_cpu),
              '-maxseq', str(self.maxseq)
              ] + db_cmd
 
