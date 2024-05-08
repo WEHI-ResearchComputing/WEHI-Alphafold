@@ -2,18 +2,18 @@
 
 # Disclaimer
 
-This repo is a modified copy of [DeepMind AlphaFold](https://github.com/google-deepmind/alphafold). the modifications done is to optimise the runs on WEHI's HPC (Milton) and make best use of the limited resources.
+This repo is a modified copy of [DeepMind AlphaFold](https://github.com/google-deepmind/alphafold). The modifications done are to optimise the runs on WEHI's HPC (Milton) and make the best use of the limited resources.
 
 ## Modifications:
 * Most changes happened in [run_alphafold.py](https://github.com/WEHI-ResearchComputing/WEHI-Alphafold/blob/main/run_alphafold.py). The following were added to run each step in a separate task and also run each prediction model on a different GPU in parallel instead of all 5 models on one GPU.
   
-      1- Add flag (model_indices) to specify which prediction model to run. 
+      1- Add a flag (model_indices) to specify which prediction model to run. 
     
-      2- Add flag (relax_only) to run relaxation only on saved prediction results.
+      2- Add a flag (relax_only) to run relaxation only on saved prediction results.
   
-      3- Add flag (features_only) to run the MSA and feature extraction step only.
+      3- Add a flag (features_only) to run the MSA and feature extraction step only.
 
-* Add re-ranking function, to read all available results in the output directory and rank the models. It also contains a plotting function that plots `MSA WITH COVERAGE`, `LDDT PER POSITION` and `Predicted LDDt and Predicted Aligned Errorr per model`
+* Add a re-ranking function, to read all available results in the output directory and rank the models. It also contains a plotting function that plots `MSA WITH COVERAGE`, `LDDT PER POSITION` and `Predicted LDDt and Predicted Aligned Errorr per model`
 * Singularity [definition file](https://github.com/WEHI-ResearchComputing/WEHI-Alphafold/blob/main/AlphaFold.def)
 * Add wrappers to run alphafold from singularity image
 
