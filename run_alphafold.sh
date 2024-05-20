@@ -30,6 +30,7 @@ printHelpAndExit() {
   echo -e "  -d  databases path         Path to the directory containing relevant databases. (Default: $DATABASES_DIR)."
   echo -e "  -p  database preset        Choose db preset model (reduced_dbs|full_dbs). (Default: full_dbs)."
   echo -e "  -f  features only          Stop pipeline once feature extraction is complete and features.pkl is created."
+  echo -e "  -j  relax only             If set run relaxation only, checks if unrelaxed pdbs exist (Default: false)."
   echo -e "  -m  model preset           Model to use (monomer|monomer_casp14|monomer_ptm|multimer). (Default: monomer)."
   echo -e "  -n  model indices          Model indices to use (comma-separated list 0,...,4. No spaces). (Default: 0)."
   echo -e "  -i  num of predictions     Number of multimer predictions per model (each with a different random seed)"
@@ -67,7 +68,7 @@ benchmark=false
 features_only=false
 input_files=""
 use_precomputed_msas=false
-run_relax=true
+relax_only=false
 use_gpu_relax=true
 custom_templates_path=""
 seqres_path=""
@@ -75,7 +76,7 @@ seqres_path=""
 while [ $# -gt 0 ]; do
     unset OPTARG
     unset OPTIND
-    while getopts :o:g:l:c:s:d:p:fm:n:i:br:xt:uh opt; do
+    while getopts :o:g:l:c:s:d:p:fjm:n:i:br:xt:uh opt; do
       if [[ ${OPTARG} == -* ]]; then 
 		  echo -e "\nArgument missing for -${opt}"
 		  printHelpAndExit 1 
@@ -90,6 +91,7 @@ while [ $# -gt 0 ]; do
         d) databases_path=$(echo $OPTARG | sed 's:/*$::'); ;;
         p) db_preset=$OPTARG ;;
         f) features_only=true ;;
+	j) relax_only=true ;;
         m) model_preset=$OPTARG ;;
         n) model_indices=$OPTARG ;;
         i) num_predictions=$OPTARG ;;
@@ -355,6 +357,7 @@ ${PREDICTIONS} \
 --models_to_relax=$models_to_relax \
 --use_gpu_relax=$use_gpu_relax \
 --features_only=$features_only \
+--relax_only=$relax_only \
 --logtostderr 2>&1
 
 singularity_exit=$?
